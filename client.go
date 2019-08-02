@@ -212,7 +212,7 @@ func NewDialer(oldAddress, newAddress string) func(network, address string) (net
 			//fmt.Println("address original =", addr)
 			if addr == oldAddress {
 				addr = newAddress
-				fmt.Println("connected to =>", addr)
+				fmt.Println("conn.", oldAddress, "=>", addr)
 			}
 			return dialer.DialContext(ctx, network, addr)
 		}(context.Background(), network, address)
