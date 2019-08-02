@@ -31,6 +31,8 @@ func New(host string, port uint, rps int) (*MaxCapacity, error) {
 	// TODO: check destination host
 	mxc := &MaxCapacity{
 		sourceHost: host,
+		port:       port,
+		rps:        rps,
 	}
 	err := mxc.init()
 	if err != nil {
@@ -73,13 +75,9 @@ func (mxc *MaxCapacity) init() error {
 			for _, ip := range aRecords {
 				// TODO: check for destination port (80 or 443), cleanup
 				destination := ip.A.String() + ":" + strconv.Itoa(int(mxc.port))
-				req := request.NewRequest(NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination))
-				//req := request.NewRequest(NewHTTPClient())
-				req.Headers = map[string]string{
-					"Connection": "keep-alive",
-				}
+
 				rrrr := &Request2Limit{
-					Req:                req,
+					Req:                request.NewRequest(NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination)),
 					destinationAddress: destination,
 					RL:                 ratelimit.New(mxc.rps, ratelimit.WithoutSlack),
 					mu:                 &sync.RWMutex{},
@@ -257,38 +255,8 @@ func (r2l *Request2Limit) SetAsNotWaiting() {
 }
 
 ///////////////////
-func (mxc *MaxCapacity) GetOnce(url interface{}) (resp *request.Response, err error) {
 
-	// get a client:
-	rrrr := mxc.clients.Next().(*Request2Limit)
-	if rrrr.IsWaiting() {
-		for {
-			if rrrr.IsWaiting() {
-				time.Sleep(time.Second)
-			} else {
-				break
-			}
-		}
-	}
-
-	// take a rate token from the client:
-	rrrr.RL.Take()
-
-	// try sending the request:
-	resp, err = rrrr.Req.Get(url)
-	if err != nil {
-
-	} else {
-		// here the logic states that we wait only in case of a status 429 (other APIs might have a different status code or logic)
-		if resp.StatusCode == http.StatusTooManyRequests {
-			rrrr.SetAsWaiting()
-		} else {
-			rrrr.SetAsNotWaiting()
-		}
-	}
-	return
-}
-func (mxc *MaxCapacity) GetWithRetry(url interface{}) (resp *request.Response, err error) {
+func (mxc *MaxCapacity) Get(url interface{}, modifier func(req *request.Request) *request.Request) (resp *request.Response, err error) {
 	// get a client:
 	rrrr := mxc.clients.Next().(*Request2Limit)
 	if rrrr.IsWaiting() {
@@ -306,6 +274,7 @@ func (mxc *MaxCapacity) GetWithRetry(url interface{}) (resp *request.Response, e
 		// take a rate token from the client:
 		rrrr.RL.Take()
 
+		rrrr.Req = modifier(rrrr.Req)
 		// try sending the request:
 		resp, err = rrrr.Req.Get(url)
 		if err != nil {

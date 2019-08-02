@@ -11,11 +11,16 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gagliardetto/maxcapacity"
+	"github.com/gagliardetto/request"
 	"github.com/panjf2000/ants"
 )
 
 var (
 	start = time.Now()
+)
+
+const (
+	apiDomain = "api.example.com"
 )
 
 func myFunc(cl *maxcapacity.MaxCapacity, i interface{}) {
@@ -25,7 +30,15 @@ func myFunc(cl *maxcapacity.MaxCapacity, i interface{}) {
 
 		// try sending the request:
 		// NOTE: the host must be the same that was used to create the maxcapacity object.
-		resp, err := cl.GetWithRetry("https://api.example.com")
+		resp, err := cl.Get(
+			"https://"+apiDomain,
+			func(req *request.Request) *request.Request {
+				req.Headers = map[string]string{
+					"Connection": "keep-alive",
+				}
+				return req
+			},
+		)
 		if err != nil {
 			// if there is an error (most likely only client timeout while waiting for headers)
 			spew.Dump(err)
@@ -52,7 +65,7 @@ func myFunc(cl *maxcapacity.MaxCapacity, i interface{}) {
 	}
 }
 func main() {
-	cl, err := maxcapacity.New("api.example.com", 443, 8)
+	cl, err := maxcapacity.New(apiDomain, 443, 8)
 	if err != nil {
 		panic(err)
 	}
@@ -95,20 +108,4 @@ func main() {
 	)
 
 	time.Sleep(time.Hour)
-}
-
-func example() {
-
-	cl, err := maxcapacity.New("api.example.com", 443, 8)
-	if err != nil {
-		panic(err)
-	}
-	resp, err := cl.GetWithRetry("https://api.example.com")
-	if err != nil {
-		panic(err)
-	}
-	if resp == nil {
-		panic("resp is nil")
-	}
-	spew.Dump(resp.Status)
 }
