@@ -3,6 +3,7 @@ package maxcapacity
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,22 +27,27 @@ import (
 // NOTE: the source and destination ports must be the same
 // (i.e. if I want host api.example.com:443, all requests will be direct
 // to the host A records like: 0.0.0.0:443, i.e. to the same port as the host)
-func New(host string, port uint) *MaxCapacity {
+func New(host string, port uint) (*MaxCapacity, error) {
 	// TODO: check destination host
 	mxc := &MaxCapacity{
-		host: host,
+		sourceHost: host,
 	}
-	mxc.init()
-	return mxc
+	err := mxc.init()
+	if err != nil {
+		return nil, err
+	}
+	return mxc, nil
 }
 
 type MaxCapacity struct {
-	host    string
-	port    uint
-	clients roundrobin.RoundRobin
+	sourceHost string
+	port       uint
+	clients    roundrobin.RoundRobin
 }
 
-func (mxc *MaxCapacity) init() {
+// init initializes the loop that will periodically (just before expiry) update
+// the A records of the destination domain (to not direct requests to wrong IPs)
+func (mxc *MaxCapacity) init() error {
 	wait := futures.New()
 	key := "updated"
 	go func() {
@@ -49,13 +55,15 @@ func (mxc *MaxCapacity) init() {
 			var httpClients []interface{}
 
 			///
-			ARecordsRes, err := sendDNSRequest(defaultDNS, mxc.host, dns.TypeA)
+			ARecordsRes, err := sendDNSRequest(defaultDNS, mxc.sourceHost, dns.TypeA)
 			if err != nil {
 				panic(err)
 			}
 			aRecords := extractA(ARecordsRes.Answer)
 			if len(aRecords) == 0 {
-				fmt.Println("error while getting DNS records: no records returned")
+				e := errors.New("error while getting DNS records: no records returned")
+				fmt.Println(e)
+				wait.Answer(key, nil, e)
 				time.Sleep(time.Second)
 				continue
 			}
@@ -64,16 +72,16 @@ func (mxc *MaxCapacity) init() {
 			for _, ip := range aRecords {
 				// TODO: check for destination port (80 or 443), cleanup
 				destination := ip.A.String() + ":" + strconv.Itoa(int(mxc.port))
-				req := request.NewRequest(NewHTTPClientWithLoadBalancer(mxc.host+":"+strconv.Itoa(int(mxc.port)), destination))
+				req := request.NewRequest(NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination))
 				//req := request.NewRequest(NewHTTPClient())
 				req.Headers = map[string]string{
 					"Connection": "keep-alive",
 				}
 				rrrr := &Request2Limit{
-					Req:  req,
-					host: destination,
-					RL:   ratelimit.New(8, ratelimit.WithoutSlack),
-					mu:   &sync.RWMutex{},
+					Req:                req,
+					destinationAddress: destination,
+					RL:                 ratelimit.New(8, ratelimit.WithoutSlack),
+					mu:                 &sync.RWMutex{},
 				}
 				httpClients = append(httpClients, rrrr)
 				fmt.Println(ip)
@@ -100,7 +108,8 @@ func (mxc *MaxCapacity) init() {
 			time.Sleep(sleepDuration)
 		}
 	}()
-	wait.Ask(key)
+	_, err := wait.Ask(key)
+	return err
 }
 
 var (
@@ -192,6 +201,8 @@ var dialer = &net.Dialer{
 	DualStack: true,
 }
 
+// NewDialer creates a dialer that will redirect connections to a certain address to another specific
+// address (connecting to the latter when dialing for a connection instead of the former).
 func NewDialer(oldAddress, newAddress string) func(network, address string) (net.Conn, error) {
 	return func(network, address string) (net.Conn, error) {
 		return func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -206,11 +217,11 @@ func NewDialer(oldAddress, newAddress string) func(network, address string) (net
 }
 
 type Request2Limit struct {
-	Req       *request.Request
-	RL        ratelimit.Limiter
-	host      string
-	mu        *sync.RWMutex
-	isWaiting bool
+	Req                *request.Request
+	RL                 ratelimit.Limiter
+	destinationAddress string
+	mu                 *sync.RWMutex
+	isWaiting          bool
 }
 
 func (mxc *MaxCapacity) IsWaiting() bool {
@@ -301,7 +312,7 @@ func (mxc *MaxCapacity) GetWithRetry(url interface{}) (resp *request.Response, e
 		} else {
 			// here the logic states that we wait only in case of a status 429 (other APIs might have a different status code or logic)
 			if resp.StatusCode == http.StatusTooManyRequests {
-				fmt.Println(resp.Status, rrrr.host)
+				fmt.Println(resp.Status, rrrr.destinationAddress)
 				rrrr.SetAsWaiting()
 
 				// read all body and close it to be able to reuse the connection:
@@ -312,7 +323,7 @@ func (mxc *MaxCapacity) GetWithRetry(url interface{}) (resp *request.Response, e
 				time.Sleep(time.Minute)
 				continue
 			} else {
-				fmt.Println(resp.Status, rrrr.host)
+				fmt.Println(resp.Status, rrrr.destinationAddress)
 				rrrr.SetAsNotWaiting()
 				return
 			}

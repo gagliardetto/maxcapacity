@@ -24,6 +24,7 @@ func myFunc(cl *maxcapacity.MaxCapacity, i interface{}) {
 	for {
 
 		// try sending the request:
+		// NOTE: the host must be the same that was used to create the maxcapacity object.
 		resp, err := cl.GetWithRetry("https://api.example.com")
 		if err != nil {
 			// if there is an error (most likely only client timeout while waiting for headers)
@@ -51,7 +52,10 @@ func myFunc(cl *maxcapacity.MaxCapacity, i interface{}) {
 	}
 }
 func main() {
-	cl := maxcapacity.New("api.example.com", 443)
+	cl, err := maxcapacity.New("api.example.com", 443)
+	if err != nil {
+		panic(err)
+	}
 	// TODO:
 	// - use a rate limiter for each IP
 	// - one client per IP?
@@ -95,7 +99,10 @@ func main() {
 
 func example() {
 
-	cl := maxcapacity.New("api.example.com", 443)
+	cl, err := maxcapacity.New("api.example.com", 443)
+	if err != nil {
+		panic(err)
+	}
 	resp, err := cl.GetWithRetry("https://api.example.com")
 	if err != nil {
 		panic(err)
