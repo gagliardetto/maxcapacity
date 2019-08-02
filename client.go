@@ -260,6 +260,11 @@ func (r2l *Request2Limit) SetAsNotWaiting() {
 
 ///////////////////
 
+func (mxc *MaxCapacity) GetNextR2L() *Request2Limit {
+	// get a client:
+	return mxc.clients.Next().(*Request2Limit)
+}
+
 func (mxc *MaxCapacity) Get(url interface{}, modifier func(req *request.Request) *request.Request) (resp *request.Response, err error) {
 	// get a client:
 	rrrr := mxc.clients.Next().(*Request2Limit)
