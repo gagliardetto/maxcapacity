@@ -27,7 +27,11 @@ import (
 // NOTE: the source and destination ports must be the same
 // (i.e. if I want host api.example.com:443, all requests will be direct
 // to the host A records like: 0.0.0.0:443, i.e. to the same port as the host)
-func New(host string, port uint, rps int) (*MaxCapacity, error) {
+func New(
+	host string,
+	port uint,
+	rps int,
+) (*MaxCapacity, error) {
 	// TODO: check destination host
 	mxc := &MaxCapacity{
 		sourceHost: host,
@@ -77,7 +81,7 @@ func (mxc *MaxCapacity) init() error {
 				destination := ip.A.String() + ":" + strconv.Itoa(int(mxc.port))
 
 				rrrr := &Request2Limit{
-					Req:                request.NewRequest(NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination)),
+					HTTPClient:         NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination),
 					destinationAddress: destination,
 					RL:                 ratelimit.New(mxc.rps, ratelimit.WithoutSlack),
 					mu:                 &sync.RWMutex{},
@@ -216,7 +220,7 @@ func NewDialer(oldAddress, newAddress string) func(network, address string) (net
 }
 
 type Request2Limit struct {
-	Req                *request.Request
+	HTTPClient         *http.Client
 	RL                 ratelimit.Limiter
 	destinationAddress string
 	mu                 *sync.RWMutex
@@ -270,15 +274,17 @@ func (mxc *MaxCapacity) Get(url interface{}, modifier func(req *request.Request)
 	}
 
 	for {
+		// create new request:
+		req := request.NewRequest(rrrr.HTTPClient)
+		// apply any user-specified changes:
+		req = modifier(req)
 
-		// take a rate token from the client:
+		// take a rate:
 		rrrr.RL.Take()
-
-		rrrr.Req = modifier(rrrr.Req)
 		// try sending the request:
-		resp, err = rrrr.Req.Get(url)
+		resp, err = req.Get(url)
 		if err != nil {
-
+			return
 		} else {
 			// here the logic states that we wait only in case of a status 429 (other APIs might have a different status code or logic)
 			if resp.StatusCode == http.StatusTooManyRequests {
