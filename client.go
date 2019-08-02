@@ -22,6 +22,10 @@ import (
 	"go.uber.org/ratelimit"
 )
 
+// New creates a new instance of the maxcapacity roundrobin multiplexer;
+// NOTE: the source and destination ports must be the same
+// (i.e. if I want host api.example.com:443, all requests will be direct
+// to the host A records like: 0.0.0.0:443, i.e. to the same port as the host)
 func New(host string, port uint) *MaxCapacity {
 	// TODO: check destination host
 	mxc := &MaxCapacity{
