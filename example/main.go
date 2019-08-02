@@ -52,7 +52,7 @@ func myFunc(cl *maxcapacity.MaxCapacity, i interface{}) {
 	}
 }
 func main() {
-	cl, err := maxcapacity.New("api.example.com", 443)
+	cl, err := maxcapacity.New("api.example.com", 443, 8)
 	if err != nil {
 		panic(err)
 	}
@@ -99,7 +99,7 @@ func main() {
 
 func example() {
 
-	cl, err := maxcapacity.New("api.example.com", 443)
+	cl, err := maxcapacity.New("api.example.com", 443, 8)
 	if err != nil {
 		panic(err)
 	}

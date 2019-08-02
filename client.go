@@ -27,7 +27,7 @@ import (
 // NOTE: the source and destination ports must be the same
 // (i.e. if I want host api.example.com:443, all requests will be direct
 // to the host A records like: 0.0.0.0:443, i.e. to the same port as the host)
-func New(host string, port uint) (*MaxCapacity, error) {
+func New(host string, port uint, rps int) (*MaxCapacity, error) {
 	// TODO: check destination host
 	mxc := &MaxCapacity{
 		sourceHost: host,
@@ -43,6 +43,7 @@ type MaxCapacity struct {
 	sourceHost string
 	port       uint
 	clients    roundrobin.RoundRobin
+	rps        int
 }
 
 // init initializes the loop that will periodically (just before expiry) update
@@ -80,7 +81,7 @@ func (mxc *MaxCapacity) init() error {
 				rrrr := &Request2Limit{
 					Req:                req,
 					destinationAddress: destination,
-					RL:                 ratelimit.New(8, ratelimit.WithoutSlack),
+					RL:                 ratelimit.New(mxc.rps, ratelimit.WithoutSlack),
 					mu:                 &sync.RWMutex{},
 				}
 				httpClients = append(httpClients, rrrr)
