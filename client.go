@@ -106,7 +106,12 @@ func (mxc *MaxCapacity) init() error {
 					sleepTime = ip.Header().Ttl
 				}
 			}
-			sleepDuration := time.Second * time.Duration(sleepTime-60)
+			var sleepDuration time.Duration
+			if sleepTime <= 60 {
+				sleepDuration = time.Second * time.Duration(sleepTime)
+			} else {
+				sleepDuration = time.Second * time.Duration(sleepTime-60)
+			}
 			fmt.Println("next DNS A records update in:", sleepDuration)
 			time.Sleep(sleepDuration)
 		}
@@ -170,7 +175,7 @@ func extractA(rr []dns.RR) []*dns.A {
 }
 
 var (
-	DefaultMaxIdleConnsPerHost               = 2000
+	DefaultMaxIdleConnsPerHost               = 200
 	DefaultTimeout             time.Duration = 15 * time.Second
 	DefaultKeepAlive           time.Duration = 180 * time.Second
 )
