@@ -59,9 +59,11 @@ func (mxc *MaxCapacity) init() error {
 	key := "updated"
 	go func() {
 		for {
-			var httpClients []interface{}
 
 			///
+			// sleep a small time to avoid arriving here when the expiry of records is
+			// still zero seconds(getting this to loop a lot because it will sleep zero seconds)
+			time.Sleep(time.Second)
 			ARecordsRes, err := sendDNSRequest(defaultDNS, mxc.sourceHost, dns.TypeA)
 			if err != nil {
 				panic(err)
@@ -74,29 +76,55 @@ func (mxc *MaxCapacity) init() error {
 				time.Sleep(time.Second)
 				continue
 			}
+
+			///
+
+			var latestDestinations []string
+			for _, ip := range aRecords {
+				// TODO: check for destination port (80 or 443), cleanup
+				destination := ip.A.String() + ":" + strconv.Itoa(int(mxc.port))
+				latestDestinations = append(latestDestinations, destination)
+			}
+			var relevantHTTPClients []interface{}
+			var previousDestinations []string
+			if mxc.clients != nil {
+				mxc.clients.IterateAll(func(i interface{}) bool {
+					cl := i.(*Request2Limit)
+					previousDestinations = append(previousDestinations, cl.destinationAddress)
+
+					isStillRelevant := SliceContains(latestDestinations, cl.destinationAddress)
+					if isStillRelevant {
+						relevantHTTPClients = append(relevantHTTPClients, cl)
+					}
+					return true
+				})
+			}
 			///
 			// TODO: update periodically at expiry of dns records:
 			for _, ip := range aRecords {
 				// TODO: check for destination port (80 or 443), cleanup
 				destination := ip.A.String() + ":" + strconv.Itoa(int(mxc.port))
 
-				rrrr := &Request2Limit{
-					HTTPClient:         NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination),
-					destinationAddress: destination,
-					RL:                 ratelimit.New(mxc.rps, ratelimit.WithoutSlack),
-					mu:                 &sync.RWMutex{},
+				if !SliceContains(previousDestinations, destination) {
+					rrrr := &Request2Limit{
+						HTTPClient:         NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination),
+						destinationAddress: destination,
+						RL:                 ratelimit.New(mxc.rps, ratelimit.WithoutSlack),
+						mu:                 &sync.RWMutex{},
+					}
+					relevantHTTPClients = append(relevantHTTPClients, rrrr)
+					fmt.Println("new ip:", ip)
 				}
-				httpClients = append(httpClients, rrrr)
-				fmt.Println(ip)
+
 			}
 
 			if mxc.clients == nil {
-				mxc.clients, err = roundrobin.New(httpClients)
+				mxc.clients, err = roundrobin.New(relevantHTTPClients)
 				if err != nil {
 					panic(err)
 				}
 			} else {
-				mxc.clients.Replace(httpClients)
+				mxc.clients.Replace(relevantHTTPClients)
 			}
 			wait.Answer(key, "val", nil)
 			var sleepTime uint32
@@ -106,12 +134,7 @@ func (mxc *MaxCapacity) init() error {
 					sleepTime = ip.Header().Ttl
 				}
 			}
-			var sleepDuration time.Duration
-			if sleepTime <= 60 {
-				sleepDuration = time.Second * time.Duration(sleepTime)
-			} else {
-				sleepDuration = time.Second * time.Duration(sleepTime-60)
-			}
+			sleepDuration := time.Second * time.Duration(sleepTime)
 			fmt.Println("next DNS A records update in:", sleepDuration)
 			time.Sleep(sleepDuration)
 		}
