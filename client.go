@@ -198,9 +198,9 @@ func extractA(rr []dns.RR) []*dns.A {
 }
 
 var (
-	DefaultMaxIdleConnsPerHost               = 200
-	DefaultTimeout             time.Duration = 15 * time.Second
-	DefaultKeepAlive           time.Duration = 180 * time.Second
+	MaxIdleConnsPerHost               = 100
+	Timeout             time.Duration = 15 * time.Second
+	KeepAlive           time.Duration = 15 * time.Second
 )
 
 // NewHTTPClientWithLoadBalancer returns a new Client from the provided config.
@@ -208,27 +208,27 @@ var (
 func NewHTTPClientWithLoadBalancer(oldAddress, newAddress string) *http.Client {
 
 	tr := &httpcontrol.Transport{
-		RetryAfterTimeout:   true,
-		RequestTimeout:      DefaultTimeout,
+		RetryAfterTimeout:   false,
+		RequestTimeout:      Timeout,
 		MaxTries:            3,
-		MaxIdleConnsPerHost: DefaultMaxIdleConnsPerHost,
+		MaxIdleConnsPerHost: MaxIdleConnsPerHost,
 		Proxy:               http.ProxyFromEnvironment,
 		Dial:                NewDialer(oldAddress, newAddress),
-		DialKeepAlive:       DefaultKeepAlive,
+		DialKeepAlive:       KeepAlive,
 		//TLSClientConfig: &tls.Config{
 		//	InsecureSkipVerify: conf.InsecureSkipVerify,
 		//},
 	}
 
 	return &http.Client{
-		Timeout:   DefaultTimeout,
+		Timeout:   Timeout,
 		Transport: tr,
 	}
 }
 
 var dialer = &net.Dialer{
-	Timeout:   DefaultTimeout,
-	KeepAlive: DefaultKeepAlive,
+	Timeout:   Timeout,
+	KeepAlive: KeepAlive,
 	DualStack: true,
 }
 
