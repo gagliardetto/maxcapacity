@@ -5,18 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"sort"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/facebookgo/httpcontrol"
 	"github.com/gagliardetto/futures"
-	"github.com/gagliardetto/request"
 	"github.com/gagliardetto/roundrobin"
 	. "github.com/gagliardetto/utils"
 	"github.com/miekg/dns"
@@ -110,7 +106,6 @@ func (mxc *MaxCapacity) init() error {
 						HTTPClient:         NewHTTPClientWithLoadBalancer(mxc.sourceHost+":"+strconv.Itoa(int(mxc.port)), destination),
 						destinationAddress: destination,
 						RL:                 ratelimit.New(mxc.rps, ratelimit.WithoutSlack),
-						mu:                 &sync.RWMutex{},
 					}
 					relevantHTTPClients = append(relevantHTTPClients, rrrr)
 					fmt.Println("new ip:", ip)
@@ -199,8 +194,8 @@ func extractA(rr []dns.RR) []*dns.A {
 
 var (
 	MaxIdleConnsPerHost               = 100
-	Timeout             time.Duration = 15 * time.Second
-	KeepAlive           time.Duration = 15 * time.Second
+	Timeout             time.Duration = 3 * time.Minute
+	KeepAlive           time.Duration = 30 * time.Second
 )
 
 // NewHTTPClientWithLoadBalancer returns a new Client from the provided config.
@@ -251,92 +246,13 @@ type Request2Limit struct {
 	HTTPClient         *http.Client
 	RL                 ratelimit.Limiter
 	destinationAddress string
-	mu                 *sync.RWMutex
 	isWaiting          bool
-}
-
-func (mxc *MaxCapacity) IsWaiting() bool {
-	var hasAtLeastOneFree bool
-	mxc.clients.IterateAll(func(i interface{}) bool {
-		cl := i.(*Request2Limit)
-		if !cl.IsWaiting() {
-			hasAtLeastOneFree = true
-			return false
-		}
-		return true
-	})
-	return !hasAtLeastOneFree
-}
-
-///////////////////
-func (r2l *Request2Limit) IsWaiting() bool {
-	r2l.mu.RLock()
-	defer r2l.mu.RUnlock()
-	return r2l.isWaiting
-}
-
-func (r2l *Request2Limit) SetAsWaiting() {
-	r2l.mu.Lock()
-	r2l.isWaiting = true
-	r2l.mu.Unlock()
-}
-func (r2l *Request2Limit) SetAsNotWaiting() {
-	r2l.mu.Lock()
-	r2l.isWaiting = false
-	r2l.mu.Unlock()
 }
 
 ///////////////////
 
 func (mxc *MaxCapacity) GetNextR2L() *Request2Limit {
+	// TODO: check if has min TTL before returning.
 	// get a client:
 	return mxc.clients.Next().(*Request2Limit)
-}
-
-func (mxc *MaxCapacity) Get(url interface{}, modifier func(req *request.Request) *request.Request) (resp *request.Response, err error) {
-	// get a client:
-	rrrr := mxc.clients.Next().(*Request2Limit)
-	if rrrr.IsWaiting() {
-		for {
-			if rrrr.IsWaiting() {
-				time.Sleep(time.Second)
-			} else {
-				break
-			}
-		}
-	}
-
-	for {
-		// create new request:
-		req := request.NewRequest(rrrr.HTTPClient)
-		// apply any user-specified changes:
-		req = modifier(req)
-
-		// take a rate:
-		rrrr.RL.Take()
-		// try sending the request:
-		resp, err = req.Get(url)
-		if err != nil {
-			return
-		} else {
-			// here the logic states that we wait only in case of a status 429 (other APIs might have a different status code or logic)
-			if resp.StatusCode == http.StatusTooManyRequests {
-				fmt.Println(resp.Status, rrrr.destinationAddress)
-				rrrr.SetAsWaiting()
-
-				// read all body and close it to be able to reuse the connection:
-				io.Copy(ioutil.Discard, resp.Body)
-				resp.Body.Close()
-
-				// sleep the ban time:
-				time.Sleep(time.Minute)
-				continue
-			} else {
-				fmt.Println(resp.Status, rrrr.destinationAddress)
-				rrrr.SetAsNotWaiting()
-				return
-			}
-		}
-	}
-	return
 }
