@@ -14,7 +14,7 @@ import (
 	"github.com/facebookgo/httpcontrol"
 	"github.com/gagliardetto/futures"
 	"github.com/gagliardetto/roundrobin"
-	. "github.com/gagliardetto/utils"
+	. "github.com/gagliardetto/utilz"
 	"github.com/miekg/dns"
 	"go.uber.org/ratelimit"
 )
